@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R.H Motor Control</title>
+    <!-- Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for better mobile experience and aesthetics */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+            min-height: 100vh;
+        }
+        #log-area {
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: scroll;
+            background-color: #1f2937; /* Darker background for log */
+            color: #d1fae5; /* Light green text for telemetry */
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            white-space: pre-wrap;
+            border: none;
+        }
+        .data-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            cursor: default;
+        }
+        .data-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px solicitors-2px rgba(0, 0, 0, 0.05);
+        }
+        /* Ensure the main container is centered vertically on large screens */
+        @media (min-width: 1024px) {
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+        }
+        /* Specific styling for the battery card text to handle large font */
+        #card-batt-pct .battery-display {
+            font-size: 2.5rem; /* Larger font for primary metric */
+            line-height: 1;
+        }
+        /* Styling for the connect button state */
+        .btn-connect { background-color: #4f46e5; }
+        .btn-connect:hover { background-color: #4338ca; }
+        .btn-disconnect { background-color: #ef4444; }
+        .btn-disconnect:hover { background-color: #dc2626; }
+
+        /* Custom toggle switch style */
+        .toggle-switch .slider {
+            background-color: #ccc;
+            transition: .4s;
+            cursor: pointer;
+        }
+        .toggle-switch input:checked + .slider {
+            background-color: #10b981; /* Green */
+        }
+        .toggle-switch input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* --- Propeller Spinning Animation CSS (NEW) --- */
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Default color when motor is stopped/idle */
+        #PropHold path {
+            fill: #0cf014; /* #10b981 Initial green color */
+            transition: fill 0.3s ease; /* Smooth color transition */
+        }
+
+        /* Color and Animation when motor is moving (Current > threshold) */
+        #PropHold.spinning svg {
+            /* 0.3s duration, linear for smooth rotation */
+            animation: spin 0.15s linear infinite; 
+        }
+
+        #PropHold.spinning path {
+            fill: #f70702; /* Amber/Yellow color for active/moving state */
+        }
+        /* --- End Propeller Spinning Animation CSS --- */
+    </style>
+</head>
+<body class="p-4 md:p-8 flex flex-col items-center">
+
+    <div class="w-full max-w-lg">
+        <!-- HEADLINE -->
+        <h1 class="text-3xl font-extrabold text-center mb-4 text-gray-900">
+            <span class="text-blue-600">R.H</span> Motor Control
+        </h1>
+        
+        <!-- Connection Row (Status Card + Connect Button) -->
+        <div class="flex flex-col md:flex-row gap-4 mb-4 items-stretch">
+            
+            <!-- Connection Status (takes most space) -->
+            <div id="status" class="data-card p-3 md:p-4 rounded-xl shadow-lg text-center text-sm font-semibold transition bg-white border border-gray-200 flex-grow flex items-center justify-center">
+                Status: Disconnected. Ready to scan.
+            </div>
+
+            <!-- Connection Button (fixed width on desktop, full width on mobile) -->
+            <button id="connectButton" onclick="connectAndRead()" class="w-full md:w-auto p-3 rounded-xl text-white font-bold text-base transition duration-300 shadow-xl btn-connect flex-shrink-0">
+                Scan & Connect
+            </button>
+        </div>
+        
+        <!-- Motor Control Buttons (R, STOP, F) -->
+        <div class="grid grid-cols-3 gap-3 mb-4">
+            <!-- Reverse Button (Now Grey) -->
+            <button id="reverseButton" onclick="adjustDutyCycle(-1)" disabled class="p-4 rounded-xl text-white text-lg font-black transition duration-300 shadow-lg bg-gray-500 hover:bg-gray-600 active:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                R (-10%)
+            </button>
+
+            <!-- STOP Motor Button (Now Pink) -->
+            <button id="stopButton" onclick="stopMotor()" disabled class="p-4 rounded-xl text-white font-bold text-lg transition duration-300 shadow-lg bg-pink-600 hover:bg-pink-700 active:bg-pink-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                STOP (0%)
+            </button>
+            
+            <!-- Forward Button -->
+            <button id="forwardButton" onclick="adjustDutyCycle(1)" disabled class="p-4 rounded-xl text-white text-lg font-black transition duration-300 shadow-lg bg-green-600 hover:bg-green-700 active:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                F (+10%)
+            </button>
+        </div>
+        
+        <!-- Live Data Display (Cards) -->
+        <div id="data-container" class="grid grid-cols-3 gap-4 flex-grow mb-6">
+            
+            <!-- Card 1: Commanded Duty Cycle -->
+            <div id="card-duty-target" class="data-card p-4 rounded-xl shadow-lg bg-white border-2 border-green-200 col-span-1">
+                <p class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Duty Target</p>
+                <p id="currentDutyCycleDisplay" class="text-2xl font-black text-green-700 mt-1">0%</p>
+            </div>
+            
+            <!-- Card 2: Battery Percentage (V%) -->
+            <div id="card-batt-pct" class="data-card p-4 rounded-xl shadow-lg bg-white border-2 border-indigo-200 col-span-2">
+                <p class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Battery Charge (%)</p>
+                <p class="battery-display font-black text-indigo-700 mt-1" data-key="V%">--</p>
+            </div>
+            
+            <!-- Card 3: Voltage (V) -->
+            <div id="card-voltage" class="data-card p-3 rounded-xl shadow-md bg-white">
+                <p class="text-xs text-gray-500">Voltage (V)</p>
+                <p class="text-xl font-extrabold text-indigo-600" data-key="V">--</p>
+            </div>
+            
+            <!-- Card 4: Actual Current (A) -->
+            <div id="card-current" class="data-card p-3 rounded-xl shadow-md bg-white">
+                <p class="text-xs text-gray-500">Current (A)</p>
+                <p class="text-xl font-extrabold text-indigo-600" data-key="A">--</p>
+            </div>
+            
+            <!-- Card 5: VESC/MOSFET Temp (°C) -->
+            <div id="card-temp-mos" class="data-card p-3 rounded-xl shadow-md bg-white">
+                <p class="text-xs text-gray-500">Temp (°C)</p>
+                <p class="text-xl font-extrabold text-indigo-600" data-key="TempMOS">--</p>
+            </div>
+            
+            <!-- NEW CARD 6: Amp Hours (Metric) -->
+            <div id="card-amp-hours-metric" class="data-card p-4 rounded-xl shadow-lg bg-white border-2 border-indigo-200 col-span-2">
+                <p class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Amp Hours Used (AH)</p>
+                <p class="text-2xl font-black text-indigo-700 mt-1" data-key="AH">--</p>
+            </div>
+            
+            <!-- NEW CARD 7: Propeller Visual and Run Time -->
+            <div id="card-propeller-visual" class="data-card p-4 rounded-xl shadow-lg bg-white border-2 border-indigo-200 col-span-1 flex flex-col justify-between items-center text-center">
+                
+                <!-- Running Time Display (RT) -->
+                <div class="mb-2 w-full">
+                    <p class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Run Time</p>
+                    <p id="runningTimeDisplay" class="text-xl font-extrabold text-blue-600" data-key="RT">--</p>
+                </div>
+                
+                <!-- Propeller SVG -->
+                <div id="PropHold" class="flex-grow flex justify-center items-center">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-14 h-14">
+                        <!-- Black center hub -->
+                        <circle cx="12" cy="12" r="3" fill="#000000"/>
+                        
+                        <!-- Single blade path (Wider shape for boat prop) -->
+                        <path id="prop-blade-path" stroke="#000000" stroke-width="0.5" 
+                              d="M12 12 C16 8 16 4 12 2 C8 4 8 8 12 12 Z"/>
+                        
+                        <!-- Blade 1 (0 degrees) -->
+                        <use href="#prop-blade-path" transform="rotate(0, 12, 12)"/>
+                        
+                        <!-- Blade 2 (120 degrees rotation) -->
+                        <use href="#prop-blade-path" transform="rotate(120, 12, 12)"/>
+                        
+                        <!-- Blade 3 (240 degrees rotation) -->
+                        <use href="#prop-blade-path" transform="rotate(240, 12, 12)"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Take Control Button (LAST ELEMENT BEFORE LOGS) -->
+        <div class="flex flex-col mb-8">
+            <button id="takeControlButton" onclick="takeControlOverride()" disabled class="w-full p-3 rounded-xl text-white font-bold text-base transition duration-300 shadow-lg bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                Take Control
+            </button>
+        </div>
+
+        <!-- Raw Log Area Header with Toggle -->
+        <div class="flex justify-between items-center mb-3">
+            <h2 class="text-xl font-semibold text-gray-800">Raw Telemetry Log</h2>
+            <label class="toggle-switch relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="logToggle" class="sr-only">
+                <div class="slider w-10 h-6 bg-gray-300 rounded-full before:absolute before:content-[''] before:h-5 before:w-5 before:rounded-full before:left-0.5 before:bottom-0.5 before:bg-white before:transition-transform"></div>
+                <span class="ml-3 text-sm font-medium text-gray-700">Active</span>
+            </label>
+        </div>
+
+        <!-- Raw Log Area -->
+        <div id="log-area" class="p-3 rounded-xl w-full shadow-inner">
+            Awaiting connection... (Toggle switch to activate logging)
+        </div>
+    </div>
+
+    <script>
+        // --- GLOBAL VESC/BLE/LOGGING STATE ---
+        const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+        const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; 
+        const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; 
+        const METR_PRO_SERVICE_UUID = '0000fef6-0000-1000-8000-00805f9b34fb'; 
+
+        let bleDevice = null;
+        let bleServer = null;
+        let nusRxCharacteristic = null;
+        
+        const statusElement = document.getElementById('status');
+        const logElement = document.getElementById('log-area');
+        const connectButton = document.getElementById('connectButton');
+        const takeControlButton = document.getElementById('takeControlButton');
+        const forwardButton = document.getElementById('forwardButton');
+        const reverseButton = document.getElementById('reverseButton');
+        const stopButton = document.getElementById('stopButton');
+        const logToggle = document.getElementById('logToggle');
+        const propHoldElement = document.getElementById('PropHold'); // Propeller element
+        
+        // --- MOTOR CONTROL STATE VARIABLES ---
+        let currentDutyCycle = 0.0; 
+        const DUTY_CYCLE_STEP = 0.1; 
+        const DUTY_CYCLE_MAX = 1.0;  
+        const DUTY_CYCLE_MIN = -1.0; 
+        
+        // State for current draw
+        let currentMotorAmps = 0.0; 
+        const SPIN_THRESHOLD_AMPS = 0.1; // Threshold to start animation (e.g., > 0.5A)
+
+        // Motor Direction Constant
+        // Set to 1 for normal operation (Forward button yields positive duty cycle signal).
+        // Set to -1 if the motor is physically wired in reverse and you want to flip the command sign.
+        const MOTOR_DIRECTION = -1; 
+
+        // ----------------------------------------------------------------------
+        // *** IMPORTANT: BATTERY CALIBRATION CONSTANTS ***
+        // These values determine the battery percentage display. 
+        // You MUST change them to match your battery pack (e.g., 6S, 10S, 12S Li-ion).
+        // 
+        // V_MAX: Voltage when fully charged (e.g., 4.2V * S-count)
+        // V_MIN: Voltage when considered empty/cut-off (e.g., 3.3V * S-count)
+        // ----------------------------------------------------------------------
+        const V_MAX = 54.4; // Default: 12S Li-ion max voltage (4.2V * 12)
+        const V_MIN = 42.5; // Default: 12S Li-ion empty voltage (3.3V * 12) 
+        
+        // State to track if the app has asserted control
+        let isControlOverridden = false;
+        
+        // --- EVENT LISTENERS ---
+        document.addEventListener('DOMContentLoaded', () => {
+            logElement.textContent = 'Awaiting connection... (Toggle switch to activate logging)';
+        });
+        
+        // --- MOTOR COMMAND LOGIC ---
+
+        async function sendSingleCommand(commandStr) {
+            if (!nusRxCharacteristic) {
+                logMessage(`ERROR: Cannot send command, connection is lost or not ready.`, 'error');
+                return;
+            }
+            try {
+                const encoder = new TextEncoder('utf-8');
+                // Web Bluetooth writeValue expects a DataView or ArrayBufferView
+                await nusRxCharacteristic.writeValue(encoder.encode(commandStr));
+                logMessage(`TX Command: ${commandStr}`, 'tx');
+            } catch (error) {
+                logMessage(`Command Write Error: ${error.name || error}.`, 'error');
+            }
+        }
+        
+        function stopMotor() {
+            if (!isControlOverridden) {
+                logMessage('Cannot STOP: Control has not been taken yet.', 'warning');
+                return;
+            }
+            currentDutyCycle = 0.0;
+            
+            // Apply MOTOR_DIRECTION multiplier, though 0 * multiplier is still 0
+            const dutyCycleToSend = currentDutyCycle * MOTOR_DIRECTION; 
+            sendSingleCommand(`CMD=A${dutyCycleToSend.toFixed(1)}`);
+            
+            updateDutyCycleDisplay();  
+            logMessage('Motor STOP (0.0) commanded.', 'info');
+        }
+
+        function adjustDutyCycle(direction) {
+            if (!isControlOverridden) {
+                logMessage('Cannot adjust speed: Control has not been taken yet.', 'warning');
+                return;
+            }
+
+            // 1. Calculate the new UI/Input Duty Cycle
+            currentDutyCycle += direction * DUTY_CYCLE_STEP;
+            currentDutyCycle = Math.max(DUTY_CYCLE_MIN, Math.min(DUTY_CYCLE_MAX, currentDutyCycle));
+            currentDutyCycle = parseFloat(currentDutyCycle.toFixed(1)); 
+            
+            // 2. Apply the MOTOR_DIRECTION multiplier for the VESC command
+            const dutyCycleToSend = currentDutyCycle * MOTOR_DIRECTION;
+
+            // 3. Send the command using the adjusted value
+            sendSingleCommand(`CMD=A${dutyCycleToSend.toFixed(1)}`);
+
+            // 4. Update the UI using the un-multiplied value (currentDutyCycle)
+            updateDutyCycleDisplay();
+            logMessage(`New Duty Cycle Target State: ${currentDutyCycle.toFixed(1)} (VESC signal: ${dutyCycleToSend.toFixed(1)})`, 'info');
+        }
+
+        async function takeControlOverride() {
+            if (!bleDevice || !bleDevice.gatt.connected) {
+                logMessage('Cannot take control: Not connected.', 'warning');
+                return;
+            }
+            
+            // Send the Override command first
+            await sendSingleCommand('CMD=OV'); 
+            
+            currentDutyCycle = 0.0; 
+            
+            // Send initial STOP command immediately after override
+            const dutyCycleToSend = currentDutyCycle * MOTOR_DIRECTION; 
+            await sendSingleCommand(`CMD=A${dutyCycleToSend.toFixed(1)}`);
+            
+            forwardButton.disabled = false;
+            reverseButton.disabled = false;
+            stopButton.disabled = false;
+            takeControlButton.disabled = true; 
+            
+            isControlOverridden = true; 
+            logMessage('Control Override requested. App commands are now prioritized.', 'tx');
+            
+            updateControlOverrideButton(true);
+            updateDutyCycleDisplay();
+        }
+        
+        function updateDutyCycleDisplay() {
+            // Note: This function uses the un-multiplied 'currentDutyCycle' for UI display
+            const displayValue = (currentDutyCycle * 100).toFixed(0);
+            const displayElement = document.getElementById('currentDutyCycleDisplay');
+            const card = document.getElementById('card-duty-target');
+            
+            displayElement.textContent = `${displayValue}%`;
+
+            // Reset classes
+            card.classList.remove('bg-green-100', 'bg-pink-100', 'border-green-400', 'border-pink-400', 'border-gray-200');
+            card.classList.add('bg-white'); 
+
+            // Apply direction-specific styling
+            if (currentDutyCycle > 0) {
+                displayElement.classList.replace('text-pink-700', 'text-green-700');
+                displayElement.classList.replace('text-gray-700', 'text-green-700');
+                card.classList.add('bg-green-100', 'border-green-400');
+            } else if (currentDutyCycle < 0) {
+                displayElement.classList.replace('text-green-700', 'text-pink-700');
+                displayElement.classList.replace('text-gray-700', 'text-pink-700');
+                card.classList.add('bg-pink-100', 'border-pink-400');
+            } else {
+                displayElement.classList.replace('text-green-700', 'text-gray-700');
+                displayElement.classList.replace('text-pink-700', 'text-gray-700');
+                displayElement.classList.add('text-gray-700');
+                card.classList.add('border-gray-200'); 
+            }
+        }
+
+        function updateControlOverrideButton(isActive) {
+            if (isActive) {
+                takeControlButton.textContent = 'Control Active (App)';
+                takeControlButton.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+                takeControlButton.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+            } else {
+                takeControlButton.textContent = 'Take Control';
+                takeControlButton.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                takeControlButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+            }
+        }
+
+
+        // --- BLE CONNECTIVITY ---
+
+        async function connectAndRead() {
+            if (bleDevice && bleDevice.gatt.connected) {
+                disconnect();
+                return;
+            }
+
+            statusElement.textContent = 'Status: Scanning for devices...';
+
+            try {
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [
+                        { name: 'VESC_PRIORITY_BRIDGE' }, 
+                        { namePrefix: 'ESP32' }, 
+                        { services: [NUS_SERVICE_UUID] },
+                        { services: [METR_PRO_SERVICE_UUID] } 
+                    ],
+                    optionalServices: [NUS_SERVICE_UUID, METR_PRO_SERVICE_UUID], 
+                });
+
+                logMessage(`Found device: ${bleDevice.name}`);
+                statusElement.textContent = `Status: Connecting to ${bleDevice.name}...`;
+
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+                bleServer = await bleDevice.gatt.connect();
+                logMessage('Connected to GATT Server.', 'info');
+                
+                let nusService;
+                try {
+                    // Try the standard NUS service first
+                    nusService = await bleServer.getPrimaryService(NUS_SERVICE_UUID);
+                } catch(e) {
+                    logMessage('Standard NUS service not found. Trying Metr Pro Service (0000fef6)...', 'warning');
+                    // Fallback to Metr Pro service if NUS fails
+                    nusService = await bleServer.getPrimaryService(METR_PRO_SERVICE_UUID);
+                }
+
+                const nusTxCharacteristic = await nusService.getCharacteristic(NUS_TX_CHAR_UUID);
+                nusRxCharacteristic = await nusService.getCharacteristic(NUS_RX_CHAR_UUID);
+
+                await nusTxCharacteristic.startNotifications();
+                nusTxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+                logMessage('Started Telemetry Notifications. App is ready for control.', 'info');
+
+                statusElement.textContent = `Status: Connected to ${bleDevice.name}. Telemetry active.`;
+                
+                connectButton.textContent = 'Disconnect';
+                connectButton.classList.remove('btn-connect');
+                connectButton.classList.add('btn-disconnect');
+                
+                forwardButton.disabled = true;
+                reverseButton.disabled = true;
+                stopButton.disabled = true;
+                takeControlButton.disabled = false; 
+
+                currentDutyCycle = 0.0; 
+                updateDutyCycleDisplay();
+
+            } catch (error) {
+                if (error.name === 'NotFoundError') {
+                     logMessage(`Scanning cancelled or no device found.`, 'warning');
+                } else {
+                    logMessage(`Critical Connection Error: ${error.name || error}`, 'error');
+                    console.error('BLE Error:', error);
+                }
+                statusElement.textContent = 'Status: Connection Failed/Cancelled. Ready to scan.';
+                resetAllUI();
+            }
+        }
+
+        function disconnect() {
+            if (bleDevice && bleDevice.gatt.connected) {
+                bleDevice.gatt.disconnect();
+            } else {
+                logMessage('Device is already disconnected.', 'info');
+                resetAllUI();
+            }
+        }
+
+        function onDisconnected(event) {
+            logMessage(`Device ${event.target.name || ''} disconnected.`, 'warning');
+            resetAllUI();
+        }
+
+        function resetAllUI() {
+            bleDevice = null;
+            bleServer = null;
+            nusRxCharacteristic = null;
+            
+            currentDutyCycle = 0.0;
+            isControlOverridden = false; 
+            currentMotorAmps = 0.0; // Reset current amps
+            updatePropellerSpin(); // Stop spin immediately
+
+            updateDutyCycleDisplay();
+            updateControlOverrideButton(false); 
+
+            statusElement.textContent = 'Status: Disconnected. Ready to scan.';
+            
+            connectButton.textContent = 'Scan & Connect';
+            connectButton.classList.remove('btn-disconnect');
+            connectButton.classList.add('btn-connect');
+            
+            forwardButton.disabled = true;
+            reverseButton.disabled = true;
+            stopButton.disabled = true;
+            takeControlButton.disabled = true;
+
+            document.querySelectorAll('[data-key]').forEach(el => el.textContent = '--');
+            
+            // Clear log only if it was active
+            if (logToggle.checked) {
+                logElement.innerHTML = '';
+            } else {
+                logElement.textContent = 'Awaiting connection... (Toggle switch to activate logging)';
+            }
+        }
+
+        // --- VESC TELEMETRY PARSING & DISPLAY ---
+
+        function calculateBatteryPercentage(voltage) {
+            
+            const VMAX = V_MAX; 
+            const VMIN = V_MIN; 
+            
+            if (VMAX <= VMIN) {
+                 console.error('V_MAX must be greater than V_MIN for battery percentage calculation.');
+                 return 0;
+            }
+
+            let percentage = ((voltage - VMIN) / (VMAX - VMIN)) * 100;
+            
+            percentage = Math.max(0, Math.min(100, percentage)); 
+
+            return percentage; 
+        }
+
+        function updateDataDisplay(data) {
+            document.querySelectorAll('[data-key]').forEach(el => {
+                const key = el.getAttribute('data-key');
+                let value = data[key];
+
+                if (key === 'V%' && data['V'] !== undefined) {
+                    const voltage = data['V'];
+                    value = calculateBatteryPercentage(voltage);
+                    el.textContent = `${value.toFixed(0)}%`;
+
+                    const card = document.getElementById('card-batt-pct');
+                    card.classList.remove('bg-red-100', 'bg-yellow-100', 'bg-green-100', 'border-red-400', 'border-yellow-400', 'border-green-400', 'bg-white');
+                    
+
+                    if (value <= 20) {
+                        card.classList.add('bg-red-100', 'border-red-400');
+                    } else if (value <= 40) {
+                        card.classList.add('bg-yellow-100', 'border-yellow-400');
+                    } else {
+                        card.classList.add('bg-green-100', 'border-green-400');
+                    }
+                    
+                } else if (key === 'RT' && value !== undefined) {
+                    // Handle Run Time (string format: HH:SS)
+                    el.textContent = value;
+
+                } else if (value !== undefined) {
+                    let formattedValue;
+                    if (key === 'AH') { formattedValue = value.toFixed(2);
+                    } else if (['A', 'V', 'TempMOS'].includes(key)) { formattedValue = value.toFixed(1);
+                    } else if (['RPM', 'Error', 'CS'].includes(key)) { formattedValue = value.toFixed(0);
+                    } else { formattedValue = value.toFixed(1); }
+                    el.textContent = formattedValue;
+                }
+
+                // Update stored motor current value
+                if (key === 'A' && value !== undefined) {
+                    currentMotorAmps = Math.abs(value);
+                    updatePropellerSpin();
+                }
+            });
+        }
+
+        /**
+         * Controls the propeller spinning animation based on actual motor current.
+         */
+        function updatePropellerSpin() {
+            if (currentMotorAmps > SPIN_THRESHOLD_AMPS) {
+                // Spinning if motor is drawing significant current
+                propHoldElement.classList.add('spinning');
+            } else {
+                // Not spinning (or idle) if current is near zero
+                propHoldElement.classList.remove('spinning');
+            }
+        }
+
+
+        function handleCharacteristicValueChanged(event) {
+            const value = event.target.value;
+            const decoder = new TextDecoder('utf-8');
+            const dataString = decoder.decode(value.buffer);
+            
+            const telemetryData = {};
+            // Parse comma-separated key=value pairs
+            dataString.split(',').forEach(pair => {
+                const [key, valStr] = pair.split('=');
+                if (key && valStr) {
+                    const cleanKey = key.trim();
+                    const cleanValStr = valStr.trim().replace('%', ''); 
+                    
+                    if (cleanKey === 'RT') {
+                        // RT is a string ("HH:SS")
+                        telemetryData[cleanKey] = cleanValStr;
+                    } else {
+                        // Others are floats
+                        telemetryData[cleanKey] = parseFloat(cleanValStr);
+                    }
+                }
+            });
+
+            // --- DEBUG LOGGING FOR VOLTAGE ISSUE ---
+            if (telemetryData['V'] !== undefined) {
+                console.log(`[DEBUG] Raw Voltage (V): ${telemetryData['V'].toFixed(2)}V. Check V_MAX=${V_MAX} and V_MIN=${V_MIN} constants.`);
+            }
+            // ----------------------------------------
+
+            // Check the log toggle state before writing
+            if (logToggle.checked) {
+                updateDataDisplay(telemetryData);
+                logMessage(`RX Data: ${dataString}`, 'rx');
+            } else {
+                // We still need to update the main data display cards even if logging is off
+                updateDataDisplay(telemetryData);
+            }
+
+            // --- CONTROL SYNCHRONIZATION ---
+            if (telemetryData['CS'] === 1) { 
+                // CS=1 means hardware control (knob) is active/has taken over
+                if (isControlOverridden) {
+                    isControlOverridden = false;
+                    currentDutyCycle = 0.0;
+                    updateDutyCycleDisplay();
+                    updateControlOverrideButton(false);
+                    forwardButton.disabled = true;
+                    reverseButton.disabled = true;
+                    stopButton.disabled = true;
+                    takeControlButton.disabled = false; 
+
+                    logMessage('Control lost: Hardware knob takeover detected (CS=1). App buttons disabled.', 'info');
+                }
+            } else if (telemetryData['CS'] === 0) {
+                // CS=0 means hardware control is inactive
+                if (isControlOverridden) {
+                    // If we previously asserted control, re-enable buttons
+                    updateControlOverrideButton(true);
+                    forwardButton.disabled = false;
+                    reverseButton.disabled = false;
+                    stopButton.disabled = false;
+                    takeControlButton.disabled = true;
+                }
+            }
+        }
+
+        // --- UTILITIES ---
+
+        /**
+         * Logs a message to the raw telemetry area only if the toggle is checked 
+         * or if the message is critical (connection/control status).
+         */
+        window.logMessage = function(message, type = 'info') {
+            const isControlMessage = (type === 'info' || type === 'error' || type === 'warning' || type === 'tx');
+            
+            // Only proceed if the toggle is checked OR it's a critical control/connection message
+            if (!logToggle.checked && !isControlMessage) {
+                return;
+            }
+
+            // If the log was previously empty/placeholder text, clear it
+            if (!logToggle.checked && isControlMessage && logElement.textContent.includes('Awaiting connection')) {
+                logElement.innerHTML = '';
+            }
+
+            const timestamp = new Date().toLocaleTimeString();
+            let colorClass = 'text-gray-400';
+            
+            switch (type) {
+                case 'error': colorClass = 'text-red-500 font-bold'; break;
+                case 'warning': colorClass = 'text-yellow-400'; break;
+                case 'rx': colorClass = 'text-cyan-400'; break; 
+                case 'tx': colorClass = 'text-green-500'; break; 
+                case 'info': default: colorClass = 'text-gray-400'; break;
+            }
+
+            const logEntry = `<span class="${colorClass}">[${timestamp}] ${message}</span>\n`;
+            
+            // Prevent the log from getting too long
+            if (logElement.innerHTML.split('\n').length > 50) {
+                 logElement.innerHTML = logElement.innerHTML.split('\n').slice(-49).join('\n');
+            }
+            
+            logElement.innerHTML += logEntry;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+    </script>
+</body>
+</html>
