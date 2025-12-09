@@ -83,7 +83,7 @@
         }
 
         #PropHold.spinning path {
-            fill: #f70702; /* Amber/Yellow color for active/moving state */
+            fill: #f59e0b; /* Amber/Yellow color for active/moving state */
         }
         /* --- End Propeller Spinning Animation CSS --- */
     </style>
@@ -92,23 +92,14 @@
 
     <div class="w-full max-w-lg">
         <!-- HEADLINE -->
-        <h1 class="text-3xl font-extrabold text-center mb-4 text-gray-900">
+        <h1 class="text-3xl font-extrabold text-center mb-6 text-gray-900">
             <span class="text-blue-600">R.H</span> Motor Control
         </h1>
         
-        <!-- Connection Row (Status Card + Connect Button) -->
-        <div class="flex flex-col md:flex-row gap-4 mb-4 items-stretch">
-            
-            <!-- Connection Status (takes most space) -->
-            <div id="status" class="data-card p-3 md:p-4 rounded-xl shadow-lg text-center text-sm font-semibold transition bg-white border border-gray-200 flex-grow flex items-center justify-center">
-                Status: Disconnected. Ready to scan.
-            </div>
-
-            <!-- Connection Button (fixed width on desktop, full width on mobile) -->
-            <button id="connectButton" onclick="connectAndRead()" class="w-full md:w-auto p-3 rounded-xl text-white font-bold text-base transition duration-300 shadow-xl btn-connect flex-shrink-0">
-                Scan & Connect
-            </button>
-        </div>
+        <!-- Connection Button/Status Combined -->
+        <button id="connectButton" onclick="connectAndRead()" class="w-full p-4 mb-4 rounded-xl text-white font-bold text-lg transition duration-300 shadow-xl btn-connect">
+           Ready to scan.
+        </button>
         
         <!-- Motor Control Buttons (R, STOP, F) -->
         <div class="grid grid-cols-3 gap-3 mb-4">
@@ -155,9 +146,9 @@
                 <p class="text-xl font-extrabold text-indigo-600" data-key="A">--</p>
             </div>
             
-            <!-- Card 5: VESC/MOSFET Temp (°C) -->
+            <!-- Card 5: VESC/MOSFET Temp (ֲ°C) -->
             <div id="card-temp-mos" class="data-card p-3 rounded-xl shadow-md bg-white">
-                <p class="text-xs text-gray-500">Temp (°C)</p>
+                <p class="text-xs text-gray-500">Temp (ֲ°C)</p>
                 <p class="text-xl font-extrabold text-indigo-600" data-key="TempMOS">--</p>
             </div>
             
@@ -217,9 +208,34 @@
         </div>
 
         <!-- Raw Log Area -->
-        <div id="log-area" class="p-3 rounded-xl w-full shadow-inner">
+        <div id="log-area" class="p-3 mb-8 rounded-xl w-full shadow-inner">
             Awaiting connection... (Toggle switch to activate logging)
         </div>
+
+        <!-- START OF MOVED CODE: DUTY FACTOR CONFIG BUTTON -->
+        <button id="toggleConfigButton" onclick="toggleDutyFactorConfig()" class="w-full p-2 mb-4 rounded-xl text-sm font-semibold transition duration-300 shadow-md bg-gray-200 hover:bg-gray-300 text-gray-700">
+            Show DutyFactor Config
+        </button>
+
+        <!-- START OF MOVED CODE: DUTY FACTOR CONFIG CARD (Initially Hidden) -->
+        <div id="dutyFactorConfigCard" class="hidden p-4 mb-6 rounded-xl shadow-xl bg-blue-50 border-2 border-blue-400">
+            <h3 class="text-lg font-bold text-blue-700 mb-3">Set Throttle Duty Factor (%)</h3>
+            <p class="text-sm text-gray-600 mb-3">Sets the Duty Factor Limit (0% to 100%) in the motor controller firmware.</p>
+            <div class="flex gap-4 items-center">
+                <input type="number" id="dutyFactorInput" 
+                       min="0" max="100" value="90" 
+                       placeholder="0-100"
+                       class="flex-grow p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+                <button id="updateDutyFactorButton" 
+                        onclick="setDutyFactor()" 
+                        class="p-2 w-24 rounded-lg text-white font-bold transition duration-300 bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                        disabled>
+                    Update
+                </button>
+            </div>
+            <p id="dutyFactorMessage" class="mt-2 text-sm text-red-500 hidden"></p>
+        </div>
+        <!-- END OF MOVED CODE -->
     </div>
 
     <script>
@@ -233,9 +249,9 @@
         let bleServer = null;
         let nusRxCharacteristic = null;
         
-        const statusElement = document.getElementById('status');
+        // The connectButton is now used to display status AND trigger connection
+        const connectButton = document.getElementById('connectButton'); 
         const logElement = document.getElementById('log-area');
-        const connectButton = document.getElementById('connectButton');
         const takeControlButton = document.getElementById('takeControlButton');
         const forwardButton = document.getElementById('forwardButton');
         const reverseButton = document.getElementById('reverseButton');
@@ -255,16 +271,10 @@
 
         // Motor Direction Constant
         // Set to 1 for normal operation (Forward button yields positive duty cycle signal).
-        // Set to -1 if the motor is physically wired in reverse and you want to flip the command sign.
         const MOTOR_DIRECTION = -1; 
 
         // ----------------------------------------------------------------------
         // *** IMPORTANT: BATTERY CALIBRATION CONSTANTS ***
-        // These values determine the battery percentage display. 
-        // You MUST change them to match your battery pack (e.g., 6S, 10S, 12S Li-ion).
-        // 
-        // V_MAX: Voltage when fully charged (e.g., 4.2V * S-count)
-        // V_MIN: Voltage when considered empty/cut-off (e.g., 3.3V * S-count)
         // ----------------------------------------------------------------------
         const V_MAX = 54.4; // Default: 12S Li-ion max voltage (4.2V * 12)
         const V_MIN = 42.5; // Default: 12S Li-ion empty voltage (3.3V * 12) 
@@ -282,15 +292,17 @@
         async function sendSingleCommand(commandStr) {
             if (!nusRxCharacteristic) {
                 logMessage(`ERROR: Cannot send command, connection is lost or not ready.`, 'error');
-                return;
+                return false; // Return false on error
             }
             try {
                 const encoder = new TextEncoder('utf-8');
                 // Web Bluetooth writeValue expects a DataView or ArrayBufferView
                 await nusRxCharacteristic.writeValue(encoder.encode(commandStr));
                 logMessage(`TX Command: ${commandStr}`, 'tx');
+                return true; // Return true on success
             } catch (error) {
                 logMessage(`Command Write Error: ${error.name || error}.`, 'error');
+                return false; // Return false on error
             }
         }
         
@@ -399,6 +411,61 @@
             }
         }
 
+        // START OF DUTY FACTOR CONFIG LOGIC
+
+        const dutyFactorConfigCard = document.getElementById('dutyFactorConfigCard');
+        const dutyFactorInput = document.getElementById('dutyFactorInput');
+        const updateDutyFactorButton = document.getElementById('updateDutyFactorButton');
+        const dutyFactorMessage = document.getElementById('dutyFactorMessage');
+        const toggleConfigButton = document.getElementById('toggleConfigButton');
+
+        function toggleDutyFactorConfig() {
+            if (dutyFactorConfigCard.classList.contains('hidden')) {
+                dutyFactorConfigCard.classList.remove('hidden');
+                toggleConfigButton.textContent = 'Hide DutyFactor Config';
+            } else {
+                dutyFactorConfigCard.classList.add('hidden');
+                toggleConfigButton.textContent = 'Show DutyFactor Config';
+                dutyFactorMessage.classList.add('hidden'); // Hide messages when closing
+            }
+        }
+        
+        async function setDutyFactor() {
+            if (!bleDevice || !bleDevice.gatt.connected) {
+                dutyFactorMessage.textContent = "Error: Not connected to a device.";
+                dutyFactorMessage.classList.remove('hidden');
+                return;
+            }
+
+            const inputValue = dutyFactorInput.value;
+            const dutyFactor = parseInt(inputValue);
+            
+            dutyFactorMessage.classList.add('hidden'); // Clear previous messages
+            
+            if (isNaN(dutyFactor) || dutyFactor < 0 || dutyFactor > 100) {
+                dutyFactorMessage.textContent = "Error: Value must be an integer between 0 and 100.";
+                dutyFactorMessage.classList.remove('hidden');
+                return;
+            }
+
+            // Command format: SET=RH[Value] (e.g., SET=RH50)
+            const commandString = `SET=RH${dutyFactor}`;
+            
+            const success = await sendSingleCommand(commandString);
+
+            if (success) {
+                dutyFactorMessage.textContent = `Success: Duty Factor set to ${dutyFactor}%.`;
+                dutyFactorMessage.classList.remove('text-red-500');
+                dutyFactorMessage.classList.add('text-green-600');
+                dutyFactorMessage.classList.remove('hidden');
+            } else {
+                dutyFactorMessage.textContent = `Error: Failed to send command: ${commandString}`;
+                dutyFactorMessage.classList.remove('text-green-600');
+                dutyFactorMessage.classList.add('text-red-500');
+                dutyFactorMessage.classList.remove('hidden');
+            }
+        }
+        // END OF DUTY FACTOR CONFIG LOGIC
 
         // --- BLE CONNECTIVITY ---
 
@@ -408,7 +475,9 @@
                 return;
             }
 
-            statusElement.textContent = 'Status: Scanning for devices...';
+            // Use the button text to show the scanning status
+            connectButton.textContent = 'Status: Scanning for devices...';
+            connectButton.classList.add('opacity-75');
 
             try {
                 bleDevice = await navigator.bluetooth.requestDevice({
@@ -422,7 +491,8 @@
                 });
 
                 logMessage(`Found device: ${bleDevice.name}`);
-                statusElement.textContent = `Status: Connecting to ${bleDevice.name}...`;
+                // Update button text for connecting status
+                connectButton.textContent = `Status: Connecting to ${bleDevice.name}...`;
 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
@@ -446,9 +516,10 @@
                 nusTxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
                 logMessage('Started Telemetry Notifications. App is ready for control.', 'info');
 
-                statusElement.textContent = `Status: Connected to ${bleDevice.name}. Telemetry active.`;
+                // Update button text for connected status
+                connectButton.textContent = ` Connected. Click to Disconnect.`;
+                connectButton.classList.remove('opacity-75');
                 
-                connectButton.textContent = 'Disconnect';
                 connectButton.classList.remove('btn-connect');
                 connectButton.classList.add('btn-disconnect');
                 
@@ -456,6 +527,8 @@
                 reverseButton.disabled = true;
                 stopButton.disabled = true;
                 takeControlButton.disabled = false; 
+                // New: Enable update button on successful connection
+                updateDutyFactorButton.disabled = false;
 
                 currentDutyCycle = 0.0; 
                 updateDutyCycleDisplay();
@@ -467,7 +540,9 @@
                     logMessage(`Critical Connection Error: ${error.name || error}`, 'error');
                     console.error('BLE Error:', error);
                 }
-                statusElement.textContent = 'Status: Connection Failed/Cancelled. Ready to scan.';
+                // Update button text for failed status
+                connectButton.textContent = ' Connection Failed/Cancelled. Ready to scan.';
+                connectButton.classList.remove('opacity-75');
                 resetAllUI();
             }
         }
@@ -499,9 +574,10 @@
             updateDutyCycleDisplay();
             updateControlOverrideButton(false); 
 
-            statusElement.textContent = 'Status: Disconnected. Ready to scan.';
+            // Update button text for disconnected status
+            connectButton.textContent = 'Disconnected. Ready to scan.';
+            connectButton.classList.remove('opacity-75');
             
-            connectButton.textContent = 'Scan & Connect';
             connectButton.classList.remove('btn-disconnect');
             connectButton.classList.add('btn-connect');
             
@@ -509,6 +585,9 @@
             reverseButton.disabled = true;
             stopButton.disabled = true;
             takeControlButton.disabled = true;
+            // New: Disable update button on disconnect
+            updateDutyFactorButton.disabled = true;
+            dutyFactorMessage.classList.add('hidden'); // Clear config message
 
             document.querySelectorAll('[data-key]').forEach(el => el.textContent = '--');
             
