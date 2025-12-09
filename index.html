@@ -480,7 +480,9 @@
             connectButton.classList.add('opacity-75');
 
             try {
-                bleDevice = await navigator.bluetooth.requestDevice({
+               // --- Android ---   bleDevice = await navigator.bluetooth.requestDevice({
+                bleDevice = await navigator.bluetooth.requestLEScan({ // for ios
+                    
                     filters: [
                         { name: 'VESC_PRIORITY_BRIDGE' }, 
                         { namePrefix: 'ESP32' }, 
@@ -785,3 +787,4 @@
     </script>
 </body>
 </html>
+
