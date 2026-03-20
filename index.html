@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>R.H Motor Control</title>
-   <!-- Improved link tag for Manifest detection -->
+    <!-- Link to the manifest file for PWA/APK support -->
     <link rel="manifest" href="manifest.json" crossorigin="use-credentials">
     <!-- Load Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -111,13 +111,13 @@
         
         <!-- Motor Control Buttons (R, STOP, F) -->
         <div class="grid grid-cols-3 gap-3 mb-4">
-            <!-- Reverse Button (Now Grey) -->
+            <!-- Reverse Button -->
             <button id="reverseButton" disabled 
                 class="p-4 rounded-xl text-white text-lg font-black transition duration-300 shadow-lg bg-gray-500 hover:bg-gray-600 active:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 R (- %)
             </button>
 
-            <!-- STOP Motor Button (Now Pink) -->
+            <!-- STOP Motor Button -->
             <button id="stopButton" onclick="stopMotor()" disabled class="p-4 rounded-xl text-white font-bold text-lg transition duration-300 shadow-lg bg-pink-600 hover:bg-pink-700 active:bg-pink-800 disabled:opacity-50 disabled:cursor-not-allowed">
                 STOP (0%)
             </button>
@@ -180,34 +180,31 @@
                 <!-- Propeller SVG -->
                 <div id="PropHold" class="flex-grow flex justify-center items-center">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-14 h-14">
-                        <!-- Black center hub -->
                         <circle cx="12" cy="12" r="3" fill="#000000"/>
-                        
-                        <!-- Single blade definition -->
                         <path id="prop-blade-path" stroke="#000000" stroke-width="0.5" 
                               d="M12 12 C16 8 16 4 12 2 C8 4 8 8 12 12 Z"/>
-                        
-                        <!-- Blade 1 -->
                         <use href="#prop-blade-path" transform="rotate(0, 12, 12)"/>
-                        
-                        <!-- Blade 2 -->
                         <use href="#prop-blade-path" transform="rotate(120, 12, 12)"/>
-                        
-                        <!-- Blade 3 -->
                         <use href="#prop-blade-path" transform="rotate(240, 12, 12)"/>
                     </svg>
                 </div>
             </div>
         </div>
         
-        <!-- Take Control Button -->
-        <div class="flex flex-col mb-8">
-            <button id="takeControlButton" onclick="takeControlOverride()" disabled class="w-full p-3 rounded-xl text-white font-bold text-base transition duration-300 shadow-lg bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed">
+        <!-- Control Actions Row -->
+        <div class="flex gap-3 mb-8 items-center">
+            <!-- Take Control Button -->
+            <button id="takeControlButton" onclick="takeControlOverride()" disabled class="flex-grow p-3 rounded-xl text-white font-bold text-base transition duration-300 shadow-lg bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 Take Control
             </button>
+            <!-- MD Toggle (Motor Direction) -->
+            <label id="directionContainer" class="flex flex-col items-center bg-white p-2 rounded-xl border border-gray-200 shadow-md min-w-[60px] opacity-50 transition-opacity">
+                <span class="text-[10px] font-bold text-gray-500 mb-1 uppercase tracking-tighter">MD</span>
+                <input type="checkbox" id="directionToggle" class="w-5 h-5 accent-indigo-600 cursor-pointer" onchange="updateMotorDirection()" disabled>
+            </label>
         </div>
       
-        <!-- DEBUG div -->
+        <!-- Hidden Debug Log Section -->
         <div class="hidden">
             <div class="flex justify-between items-center mb-3">
                 <h2 class="text-xl font-semibold text-gray-800">Raw Telemetry Log</h2>
@@ -217,25 +214,7 @@
                     <span class="ml-3 text-sm font-medium text-gray-700">Active</span>
                 </label>
             </div>
-
-            <div id="log-area" class="p-3 mb-8 rounded-xl w-full shadow-inner">
-                Awaiting connection...
-            </div>
-
-            <button onclick="toggleDutyFactorConfig()" class="w-full p-2 mb-4 rounded-xl text-sm font-semibold transition duration-300 shadow-md bg-gray-200 hover:bg-gray-300 text-gray-700">
-                Show DutyFactor Config
-            </button>
-
-            <div id="dutyFactorConfigCard" class="hidden p-4 mb-6 rounded-xl shadow-xl bg-blue-50 border-2 border-blue-400">
-                <h3 class="text-lg font-bold text-blue-700 mb-3">Set Throttle Duty Factor (%)</h3>
-                <div class="flex gap-4 items-center">
-                    <input type="number" id="dutyFactorInput" min="0" max="100" value="90" class="flex-grow p-2 border border-gray-300 rounded-lg text-lg">
-                    <button id="updateDutyFactorButton" onclick="setDutyFactor()" class="p-2 w-24 rounded-lg text-white font-bold transition duration-300 bg-blue-600 hover:bg-blue-700 disabled:opacity-50" disabled>
-                        Update
-                    </button>
-                </div>
-                <p id="dutyFactorMessage" class="mt-2 text-sm text-red-500 hidden"></p>
-            </div>
+            <div id="log-area" class="p-3 mb-8 rounded-xl w-full shadow-inner">Awaiting connection...</div>
         </div>
     </div>
 
@@ -252,37 +231,44 @@
         const connectButton = document.getElementById('connectButton'); 
         const logElement = document.getElementById('log-area');
         const takeControlButton = document.getElementById('takeControlButton');
+        const directionToggle = document.getElementById('directionToggle');
+        const directionContainer = document.getElementById('directionContainer');
         const forwardButton = document.getElementById('forwardButton');
         const reverseButton = document.getElementById('reverseButton');
         const stopButton = document.getElementById('stopButton');
-        const logToggle = document.getElementById('logToggle');
         const propHoldElement = document.getElementById('PropHold');
         
         let currentDutyCycle = 0.00; 
-        const DUTY_CYCLE_STEP = 0.05; // Standard step for a tap
-        const LONG_PRESS_STEP = 0.02; // 2% step for long press
+        const DUTY_CYCLE_STEP = 0.05; 
+        const LONG_PRESS_STEP = 0.02; 
         const DUTY_CYCLE_MAX = 1.0;  
         const DUTY_CYCLE_MIN = -1.0; 
         let currentMotorAmps = 0.0; 
         const SPIN_THRESHOLD_AMPS = 0.1;
-        const MOTOR_DIRECTION = 1; 
+        
+        // Dynamic Motor Direction variable based on checkbox
+        let MOTOR_DIRECTION = -1; 
+        
         const V_MAX = 54.4; 
         const V_MIN = 42.5; 
         let isControlOverridden = false;
 
-        // Long Press State Variables
         let pressTimer = null;
         let repeatTimer = null;
         
+        function updateMotorDirection() {
+            // Unchecked (default) = -1, Checked = 1
+            MOTOR_DIRECTION = directionToggle.checked ? 1 : -1;
+            console.log("Motor Direction Set To:", MOTOR_DIRECTION);
+        }
+
         async function sendSingleCommand(commandStr) {
             if (!nusRxCharacteristic) return false;
             try {
                 const encoder = new TextEncoder('utf-8');
                 await nusRxCharacteristic.writeValue(encoder.encode(commandStr));
                 return true;
-            } catch (error) {
-                return false;
-            }
+            } catch (error) { return false; }
         }
         
         function stopMotor() {
@@ -292,7 +278,6 @@
             updateDutyCycleDisplay();  
         }
 
-        // Modified adjustment function to accept custom steps
         function adjustDutyCycle(direction, step = DUTY_CYCLE_STEP) {
             if (!isControlOverridden) return;
             currentDutyCycle += direction * step;
@@ -302,21 +287,14 @@
             updateDutyCycleDisplay();
         }
 
-        // --- LONG PRESS LOGIC IMPLEMENTATION ---
-
         function startPress(direction) {
             if (!isControlOverridden) return;
-            
-            // Perform the initial single tap adjustment immediately
             adjustDutyCycle(direction, DUTY_CYCLE_STEP);
-
-            // Set a timer for 500ms before starting the repeat behavior
             pressTimer = setTimeout(() => {
-                // Every 500ms thereafter, increase/decrease by 2%
                 repeatTimer = setInterval(() => {
                     adjustDutyCycle(direction, LONG_PRESS_STEP);
                 }, 300);
-            }, 300);
+            }, 500);
         }
 
         function endPress() {
@@ -324,10 +302,8 @@
             clearInterval(repeatTimer);
         }
 
-        // Attach listeners to buttons
         forwardButton.addEventListener('mousedown', () => startPress(1));
         forwardButton.addEventListener('touchstart', (e) => { e.preventDefault(); startPress(1); });
-        
         reverseButton.addEventListener('mousedown', () => startPress(-1));
         reverseButton.addEventListener('touchstart', (e) => { e.preventDefault(); startPress(-1); });
 
@@ -336,8 +312,6 @@
             btn.addEventListener('mouseleave', endPress);
             btn.addEventListener('touchend', endPress);
         });
-
-        // --- END LONG PRESS LOGIC ---
 
         async function takeControlOverride() {
             if (!bleDevice || !bleDevice.gatt.connected) return;
@@ -357,37 +331,25 @@
             const displayValue = (currentDutyCycle * 100).toFixed(0);
             const displayElement = document.getElementById('currentDutyCycleDisplay');
             const card = document.getElementById('card-duty-target');
+            
             displayElement.textContent = `${displayValue}%`;
-            card.classList.remove('bg-green-100', 'bg-pink-100', 'border-green-400', 'border-pink-400', 'border-gray-200');
-            card.classList.add('bg-white'); 
-            if (currentDutyCycle > 0) {
-                card.classList.add('bg-green-100', 'border-green-400');
-            } else if (currentDutyCycle < 0) {
-                card.classList.add('bg-pink-100', 'border-pink-400');
+            card.className = "data-card p-4 rounded-xl shadow-lg bg-white border-2 col-span-1 " + 
+                (currentDutyCycle > 0 ? "bg-green-100 border-green-400" : (currentDutyCycle < 0 ? "bg-pink-100 border-pink-400" : "border-green-200"));
+            
+            // Enable Direction Toggle ONLY if Duty is exactly 0
+            if (currentDutyCycle === 0) {
+                directionToggle.disabled = false;
+                directionContainer.classList.remove('opacity-50');
             } else {
-                card.classList.add('border-gray-200'); 
+                directionToggle.disabled = true;
+                directionContainer.classList.add('opacity-50');
             }
         }
 
         function updateControlOverrideButton(isActive) {
-            if (isActive) {
-                takeControlButton.textContent = 'Control Active (App)';
-                takeControlButton.classList.replace('bg-yellow-600', 'bg-indigo-600');
-            } else {
-                takeControlButton.textContent = 'Take Control';
-                takeControlButton.classList.replace('bg-indigo-600', 'bg-yellow-600');
-            }
-        }
-
-        function toggleDutyFactorConfig() {
-            const card = document.getElementById('dutyFactorConfigCard');
-            card.classList.toggle('hidden');
-        }
-        
-        async function setDutyFactor() {
-            const val = parseInt(document.getElementById('dutyFactorInput').value);
-            if (isNaN(val) || val < 0 || val > 100) return;
-            await sendSingleCommand(`SET=Me${val}`);
+            takeControlButton.textContent = isActive ? 'Control Active (App)' : 'Take Control';
+            takeControlButton.className = "flex-grow p-3 rounded-xl text-white font-bold text-base transition duration-300 shadow-lg " + 
+                (isActive ? "bg-indigo-600 hover:bg-indigo-700" : "bg-yellow-600 hover:bg-yellow-700");
         }
 
         async function connectAndRead() {
@@ -410,24 +372,20 @@
                 await nusTxCharacteristic.startNotifications();
                 nusTxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
                 connectButton.textContent = ` Connected. Click to Disconnect.`;
-                connectButton.classList.replace('btn-connect', 'btn-disconnect');
+                connectButton.className = "w-full p-4 mb-4 rounded-xl text-white font-bold text-lg transition duration-300 shadow-xl btn-disconnect";
                 takeControlButton.disabled = false; 
-                document.getElementById('updateDutyFactorButton').disabled = false;
-            } catch (error) {
-                resetAllUI();
-            }
+                // Initially enable toggle because duty is 0
+                directionToggle.disabled = false;
+                directionContainer.classList.remove('opacity-50');
+            } catch (error) { resetAllUI(); }
         }
 
-        /**
-         * Disables app controls when hardware takes back control (CS=1), 
-         * but PRESERVES the BLE connection state.
-         */
         function disableControlUI() {
             currentDutyCycle = 0.00;
             updateDutyCycleDisplay();
             updateControlOverrideButton(false);
             [forwardButton, reverseButton, stopButton].forEach(b => b.disabled = true);
-            takeControlButton.disabled = false; // Re-enable the ability to take control
+            takeControlButton.disabled = false; 
         }
 
         function resetAllUI() {
@@ -440,9 +398,15 @@
             updateDutyCycleDisplay();
             updateControlOverrideButton(false); 
             connectButton.textContent = 'Ready to scan.';
-            connectButton.classList.replace('btn-disconnect', 'btn-connect');
+            connectButton.className = "w-full p-4 mb-4 rounded-xl text-white font-bold text-lg transition duration-300 shadow-xl btn-connect";
             [forwardButton, reverseButton, stopButton, takeControlButton].forEach(b => b.disabled = true);
-            document.getElementById('updateDutyFactorButton').disabled = true;
+            
+            // Reset direction UI
+            directionToggle.disabled = true;
+            directionContainer.classList.add('opacity-50');
+            directionToggle.checked = false;
+            MOTOR_DIRECTION = -1;
+
             document.querySelectorAll('[data-key]').forEach(el => el.textContent = '--');
         }
 
@@ -454,10 +418,8 @@
                     value = Math.max(0, Math.min(100, ((data['V'] - V_MIN) / (V_MAX - V_MIN)) * 100));
                     el.textContent = `${value.toFixed(0)}%`;
                     const card = document.getElementById('card-batt-pct');
-                    card.classList.remove('bg-red-100', 'bg-yellow-100', 'bg-green-100', 'border-red-400', 'border-yellow-400', 'border-green-400');
-                    if (value <= 20) card.classList.add('bg-red-100', 'border-red-400');
-                    else if (value <= 40) card.classList.add('bg-yellow-100', 'border-yellow-400');
-                    else card.classList.add('bg-green-100', 'border-green-400');
+                    card.className = "data-card p-4 rounded-xl shadow-lg bg-white border-2 col-span-2 " + 
+                        (value <= 20 ? "bg-red-100 border-red-400" : (value <= 40 ? "bg-yellow-100 border-yellow-400" : "bg-green-100 border-green-400"));
                 } else if (value !== undefined) {
                     el.textContent = typeof value === 'number' ? value.toFixed(key === 'AH' ? 2 : 1) : value;
                 }
@@ -483,7 +445,7 @@
             updateDataDisplay(telemetryData);
             if (telemetryData['CS'] === 1 && isControlOverridden) {
                 isControlOverridden = false;
-                disableControlUI(); // Fixed: Hardware takes back control, but BLE stays connected
+                disableControlUI();
             }
         }
     </script>
