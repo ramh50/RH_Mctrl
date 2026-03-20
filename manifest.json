@@ -1,0 +1,16 @@
+{
+  "background_color": "#ffffff",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "RhMotorCtrl",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "ramh50.github",
+  "start_url": "/index.html",
+  "theme_color": "#ffffff",
+  "id": "20032026",
+  "description": "Control the motor and get data",
+  "categories": [
+    "sports"
+  ]
+}
